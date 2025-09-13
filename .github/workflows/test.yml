@@ -1,0 +1,244 @@
+name: Test Suite
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  backend-tests:
+    runs-on: ubuntu-latest
+    
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: contentmagic_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+        cache: 'npm'
+        cache-dependency-path: backend/package-lock.json
+    
+    - name: Install backend dependencies
+      run: npm ci
+      working-directory: ./backend
+    
+    - name: Run backend linting
+      run: npm run lint
+      working-directory: ./backend
+      continue-on-error: true
+    
+    - name: Run backend unit tests
+      run: npm test
+      working-directory: ./backend
+      env:
+        DATABASE_URL: postgresql://postgres:postgres@localhost:5432/contentmagic_test
+        NODE_ENV: test
+        SESSION_SECRET: test_secret
+        GOOGLE_AI_API_KEY: ${{ secrets.GOOGLE_AI_API_KEY }}
+        STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
+    
+    - name: Run backend integration tests
+      run: npm run test:integration
+      working-directory: ./backend
+      env:
+        DATABASE_URL: postgresql://postgres:postgres@localhost:5432/contentmagic_test
+        NODE_ENV: test
+        SESSION_SECRET: test_secret
+        GOOGLE_AI_API_KEY: ${{ secrets.GOOGLE_AI_API_KEY }}
+        STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
+    
+    - name: Generate backend coverage report
+      run: npm run test:coverage
+      working-directory: ./backend
+      env:
+        DATABASE_URL: postgresql://postgres:postgres@localhost:5432/contentmagic_test
+        NODE_ENV: test
+        SESSION_SECRET: test_secret
+    
+    - name: Upload backend coverage to Codecov
+      uses: codecov/codecov-action@v4
+      with:
+        file: ./backend/coverage/lcov.info
+        flags: backend
+        name: backend-coverage
+
+  frontend-tests:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+        cache: 'npm'
+        cache-dependency-path: frontend/package-lock.json
+    
+    - name: Install frontend dependencies
+      run: npm ci
+      working-directory: ./frontend
+    
+    - name: Run frontend linting
+      run: npm run lint
+      working-directory: ./frontend
+      continue-on-error: true
+    
+    - name: Run frontend unit tests
+      run: npm run test:run
+      working-directory: ./frontend
+    
+    - name: Run accessibility tests
+      run: npm run test:a11y
+      working-directory: ./frontend
+    
+    - name: Generate frontend coverage report
+      run: npm run test:coverage
+      working-directory: ./frontend
+    
+    - name: Upload frontend coverage to Codecov
+      uses: codecov/codecov-action@v4
+      with:
+        file: ./frontend/coverage/lcov.info
+        flags: frontend
+        name: frontend-coverage
+
+  e2e-tests:
+    runs-on: ubuntu-latest
+    
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: contentmagic_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+        cache: 'npm'
+    
+    - name: Install dependencies
+      run: |
+        npm ci --prefix backend
+        npm ci --prefix frontend
+        npm ci
+    
+    - name: Install Playwright Browsers
+      run: npx playwright install --with-deps
+    
+    - name: Start backend server
+      run: |
+        npm run build --prefix backend
+        npm start --prefix backend &
+      env:
+        DATABASE_URL: postgresql://postgres:postgres@localhost:5432/contentmagic_test
+        NODE_ENV: test
+        SESSION_SECRET: test_secret
+        PORT: 3001
+    
+    - name: Start frontend server
+      run: |
+        npm run build --prefix frontend
+        npm run preview --prefix frontend &
+      env:
+        VITE_API_URL: http://localhost:3001
+    
+    - name: Wait for servers to be ready
+      run: |
+        npx wait-on http://localhost:3001/health
+        npx wait-on http://localhost:5173
+    
+    - name: Run Playwright tests
+      run: npx playwright test
+    
+    - name: Upload Playwright report
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: playwright-report
+        path: playwright-report/
+        retention-days: 30
+
+  performance-tests:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+        cache: 'npm'
+    
+    - name: Install dependencies
+      run: |
+        npm ci --prefix backend
+        npm ci --prefix frontend
+    
+    - name: Run backend performance tests
+      run: npm run test:performance
+      working-directory: ./backend
+      env:
+        NODE_ENV: test
+        SESSION_SECRET: test_secret
+    
+    - name: Run frontend performance tests
+      run: npm run test:performance
+      working-directory: ./frontend
+
+  security-tests:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+        cache: 'npm'
+    
+    - name: Install dependencies
+      run: |
+        npm ci --prefix backend
+        npm ci --prefix frontend
+    
+    - name: Run security audit
+      run: |
+        npm audit --audit-level moderate --prefix backend
+        npm audit --audit-level moderate --prefix frontend
+    
+    - name: Run dependency check
+      run: |
+        npx audit-ci --config .audit-ci.json --prefix backend
+        npx audit-ci --config .audit-ci.json --prefix frontend
+      continue-on-error: true
