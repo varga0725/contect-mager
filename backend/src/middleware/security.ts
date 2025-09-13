@@ -1,9 +1,9 @@
 import { Request, Response, NextFunction } from 'express';
 import rateLimit from 'express-rate-limit';
 import { body, validationResult, param, query } from 'express-validator';
-import DOMPurify from 'isomorphic-dompurify';
 import { AppError, ErrorCode } from '../types/errors.js';
 import { logger } from '../utils/logger.js';
+import crypto from 'crypto';
 
 /**
  * Input sanitization middleware
@@ -12,11 +12,11 @@ import { logger } from '../utils/logger.js';
 export function sanitizeInput(req: Request, res: Response, next: NextFunction) {
   const sanitizeObject = (obj: any): any => {
     if (typeof obj === 'string') {
-      return DOMPurify.sanitize(obj, { 
-        ALLOWED_TAGS: [], 
-        ALLOWED_ATTR: [],
-        KEEP_CONTENT: true 
-      });
+      // Simple HTML/script tag removal for security
+      return obj
+        .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
+        .replace(/<[^>]*>/g, '')
+        .trim();
     }
     
     if (Array.isArray(obj)) {
@@ -213,7 +213,7 @@ export function csrfProtection(req: Request, res: Response, next: NextFunction) 
  */
 export function generateCSRFToken(req: Request, res: Response, next: NextFunction) {
   if (!req.session?.csrfToken) {
-    req.session.csrfToken = require('crypto').randomBytes(32).toString('hex');
+    req.session.csrfToken = crypto.randomBytes(32).toString('hex');
   }
   
   res.locals.csrfToken = req.session.csrfToken;

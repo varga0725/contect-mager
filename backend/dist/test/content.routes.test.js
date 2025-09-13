@@ -78,6 +78,39 @@ vi.mock('../config/database.js', () => ({
                     }]),
             }),
         }),
+        select: vi.fn().mockReturnValue({
+            from: vi.fn().mockReturnValue({
+                where: vi.fn().mockReturnValue({
+                    limit: vi.fn().mockReturnValue({
+                        offset: vi.fn().mockReturnValue({
+                            orderBy: vi.fn().mockResolvedValue([
+                                {
+                                    id: 1,
+                                    platform: 'instagram',
+                                    contentType: 'caption',
+                                    contentData: { text: 'Test content 1' },
+                                    metadata: { generationParams: { prompt: 'test' } },
+                                    scheduledAt: null,
+                                    createdAt: new Date('2024-01-01'),
+                                },
+                                {
+                                    id: 2,
+                                    platform: 'tiktok',
+                                    contentType: 'image',
+                                    contentData: { imageUrl: 'https://example.com/image.jpg' },
+                                    metadata: { generationParams: { prompt: 'test image' } },
+                                    scheduledAt: null,
+                                    createdAt: new Date('2024-01-02'),
+                                },
+                            ]),
+                        }),
+                    }),
+                }),
+            }),
+        }),
+        delete: vi.fn().mockReturnValue({
+            where: vi.fn().mockResolvedValue(undefined),
+        }),
         query: {
             users: {
                 findFirst: vi.fn().mockResolvedValue({
@@ -378,6 +411,206 @@ describe('Content Generation API Routes', () => {
                 platform: 'instagram',
             });
             expect(db.insert).toHaveBeenCalled();
+        });
+    });
+    describe('GET /api/content/library', () => {
+        beforeEach(async () => {
+            // Mock the select chain for content library
+            const { db } = await import('../config/database.js');
+            // Mock count query
+            vi.mocked(db.select).mockImplementation((fields) => {
+                if (fields && fields.count) {
+                    return {
+                        from: vi.fn().mockReturnValue({
+                            where: vi.fn().mockResolvedValue([{ count: 2 }]),
+                        }),
+                    };
+                }
+                // Mock content query
+                return {
+                    from: vi.fn().mockReturnValue({
+                        where: vi.fn().mockReturnValue({
+                            limit: vi.fn().mockReturnValue({
+                                offset: vi.fn().mockReturnValue({
+                                    orderBy: vi.fn().mockResolvedValue([
+                                        {
+                                            id: 1,
+                                            platform: 'instagram',
+                                            contentType: 'caption',
+                                            contentData: { text: 'Test content 1' },
+                                            metadata: { generationParams: { prompt: 'test' } },
+                                            scheduledAt: null,
+                                            createdAt: new Date('2024-01-01'),
+                                        },
+                                        {
+                                            id: 2,
+                                            platform: 'tiktok',
+                                            contentType: 'image',
+                                            contentData: { imageUrl: 'https://example.com/image.jpg' },
+                                            metadata: { generationParams: { prompt: 'test image' } },
+                                            scheduledAt: null,
+                                            createdAt: new Date('2024-01-02'),
+                                        },
+                                    ]),
+                                }),
+                            }),
+                        }),
+                    }),
+                };
+            });
+        });
+        it('should return paginated content library', async () => {
+            const response = await request(app)
+                .get('/api/content/library');
+            expect(response.status).toBe(200);
+            expect(response.body.success).toBe(true);
+            expect(response.body.data).toHaveProperty('content');
+            expect(response.body.data).toHaveProperty('pagination');
+            expect(response.body.data.pagination).toHaveProperty('page');
+            expect(response.body.data.pagination).toHaveProperty('limit');
+            expect(response.body.data.pagination).toHaveProperty('total');
+            expect(response.body.data.pagination).toHaveProperty('totalPages');
+            expect(Array.isArray(response.body.data.content)).toBe(true);
+        });
+        it('should support pagination parameters', async () => {
+            const response = await request(app)
+                .get('/api/content/library?page=2&limit=5');
+            expect(response.status).toBe(200);
+            expect(response.body.data.pagination.page).toBe(2);
+            expect(response.body.data.pagination.limit).toBe(5);
+        });
+        it('should support platform filtering', async () => {
+            const response = await request(app)
+                .get('/api/content/library?platform=instagram');
+            expect(response.status).toBe(200);
+            expect(response.body.data.filters.platform).toBe('instagram');
+        });
+        it('should support content type filtering', async () => {
+            const response = await request(app)
+                .get('/api/content/library?contentType=caption');
+            expect(response.status).toBe(200);
+            expect(response.body.data.filters.contentType).toBe('caption');
+        });
+        it('should support sorting parameters', async () => {
+            const response = await request(app)
+                .get('/api/content/library?sortBy=platform&sortOrder=asc');
+            expect(response.status).toBe(200);
+            expect(response.body.data.filters.sortBy).toBe('platform');
+            expect(response.body.data.filters.sortOrder).toBe('asc');
+        });
+        it('should validate and sanitize pagination parameters', async () => {
+            const response = await request(app)
+                .get('/api/content/library?page=-1&limit=100');
+            expect(response.status).toBe(200);
+            expect(response.body.data.pagination.page).toBe(1); // Should default to 1
+            expect(response.body.data.pagination.limit).toBe(50); // Should cap at 50
+        });
+        it('should ignore invalid platform filters', async () => {
+            const response = await request(app)
+                .get('/api/content/library?platform=invalid-platform');
+            expect(response.status).toBe(200);
+            expect(response.body.data.filters.platform).toBe(null);
+        });
+        it('should ignore invalid content type filters', async () => {
+            const response = await request(app)
+                .get('/api/content/library?contentType=invalid-type');
+            expect(response.status).toBe(200);
+            expect(response.body.data.filters.contentType).toBe(null);
+        });
+        it('should default to valid sort parameters for invalid input', async () => {
+            const response = await request(app)
+                .get('/api/content/library?sortBy=invalid&sortOrder=invalid');
+            expect(response.status).toBe(200);
+            expect(response.body.data.filters.sortBy).toBe('createdAt');
+            expect(response.body.data.filters.sortOrder).toBe('desc');
+        });
+    });
+    describe('DELETE /api/content/:id', () => {
+        beforeEach(async () => {
+            const { db } = await import('../config/database.js');
+            // Reset mocks
+            vi.clearAllMocks();
+            // Mock select for checking content existence
+            vi.mocked(db.select).mockReturnValue({
+                from: vi.fn().mockReturnValue({
+                    where: vi.fn().mockReturnValue({
+                        limit: vi.fn().mockResolvedValue([
+                            { id: 1, userId: 1 }
+                        ]),
+                    }),
+                }),
+            });
+            // Mock delete operation
+            vi.mocked(db.delete).mockReturnValue({
+                where: vi.fn().mockResolvedValue(undefined),
+            });
+        });
+        it('should delete content successfully', async () => {
+            const response = await request(app)
+                .delete('/api/content/1');
+            expect(response.status).toBe(200);
+            expect(response.body.success).toBe(true);
+            expect(response.body.data.message).toBe('Content deleted successfully');
+            expect(response.body.data.deletedId).toBe(1);
+        });
+        it('should return 400 for invalid content ID', async () => {
+            const response = await request(app)
+                .delete('/api/content/invalid');
+            expect(response.status).toBe(400);
+            expect(response.body.error.code).toBe('INVALID_CONTENT_ID');
+        });
+        it('should return 400 for negative content ID', async () => {
+            const response = await request(app)
+                .delete('/api/content/-1');
+            expect(response.status).toBe(400);
+            expect(response.body.error.code).toBe('INVALID_CONTENT_ID');
+        });
+        it('should return 404 for non-existent content', async () => {
+            const { db } = await import('../config/database.js');
+            // Mock empty result for non-existent content
+            vi.mocked(db.select).mockReturnValue({
+                from: vi.fn().mockReturnValue({
+                    where: vi.fn().mockReturnValue({
+                        limit: vi.fn().mockResolvedValue([]), // Empty array
+                    }),
+                }),
+            });
+            const response = await request(app)
+                .delete('/api/content/999');
+            expect(response.status).toBe(404);
+            expect(response.body.error.code).toBe('CONTENT_NOT_FOUND');
+        });
+        it('should return 403 for unauthorized access', async () => {
+            const { db } = await import('../config/database.js');
+            // Mock content belonging to different user
+            vi.mocked(db.select).mockReturnValue({
+                from: vi.fn().mockReturnValue({
+                    where: vi.fn().mockReturnValue({
+                        limit: vi.fn().mockResolvedValue([
+                            { id: 1, userId: 999 } // Different user ID
+                        ]),
+                    }),
+                }),
+            });
+            const response = await request(app)
+                .delete('/api/content/1');
+            expect(response.status).toBe(403);
+            expect(response.body.error.code).toBe('UNAUTHORIZED_ACCESS');
+        });
+        it('should handle database errors gracefully', async () => {
+            const { db } = await import('../config/database.js');
+            // Mock database error
+            vi.mocked(db.select).mockReturnValue({
+                from: vi.fn().mockReturnValue({
+                    where: vi.fn().mockReturnValue({
+                        limit: vi.fn().mockRejectedValue(new Error('Database error')),
+                    }),
+                }),
+            });
+            const response = await request(app)
+                .delete('/api/content/1');
+            expect(response.status).toBe(500);
+            expect(response.body.error.code).toBe('DELETE_ERROR');
         });
     });
     describe('GET /api/content/usage', () => {

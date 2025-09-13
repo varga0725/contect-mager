@@ -1,7 +1,16 @@
 import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from '@google/generative-ai';
+import { getExternalApiKey } from '../utils/api-keys.js';
 
-// Initialize Google AI client
-const genAI = new GoogleGenerativeAI(process.env.GOOGLE_AI_API_KEY || '');
+// Initialize Google AI client with secure API key management
+let genAI: GoogleGenerativeAI;
+
+try {
+  const apiKey = getExternalApiKey('google');
+  genAI = new GoogleGenerativeAI(apiKey);
+} catch (error) {
+  console.warn('Google AI API key not configured, AI features will be disabled');
+  genAI = new GoogleGenerativeAI(''); // Fallback for development
+}
 
 // Safety settings for content filtering
 export const safetySettings = [

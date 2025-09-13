@@ -168,7 +168,10 @@ router.get('/', async (req, res) => {
 });
 
 // PUT /api/schedule/:id - Update scheduled content
-router.put('/:id', async (req, res) => {
+router.put('/:id', 
+  validationSchemas.idParam,
+  handleValidationErrors,
+  async (req, res) => {
   try {
     const postId = parseInt(req.params.id);
     const { scheduledAt } = req.body;
@@ -257,7 +260,10 @@ router.put('/:id', async (req, res) => {
 });
 
 // DELETE /api/schedule/:id - Remove from schedule (unschedule)
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', 
+  validationSchemas.idParam,
+  handleValidationErrors,
+  async (req, res) => {
   try {
     const postId = parseInt(req.params.id);
     const userId = req.user!.id;
