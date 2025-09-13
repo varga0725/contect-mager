@@ -53,9 +53,20 @@ export function validateSessionSecret(secret: string): boolean {
  */
 export function getSecureSessionConfig(): Partial<SessionOptions> {
   const isProduction = process.env.NODE_ENV === 'production';
-  
+
+  let sessionSecret: string | undefined = process.env.SESSION_SECRET;
+  if (isProduction) {
+    if (!sessionSecret) {
+      throw new Error('SESSION_SECRET environment variable must be set in production.');
+    }
+  } else {
+    if (!sessionSecret) {
+      sessionSecret = generateSessionSecret();
+    }
+  }
+
   return {
-    secret: process.env.SESSION_SECRET || generateSessionSecret(),
+    secret: sessionSecret,
     resave: false,
     saveUninitialized: false,
     cookie: {
