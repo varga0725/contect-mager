@@ -8,6 +8,7 @@ import { posts } from '../models/schema.js';
 import { Platform, ContentType, ContentData, PostMetadata } from '../types/database.js';
 import { eq, and, desc, count } from 'drizzle-orm';
 import { rateLimiters, validationSchemas, handleValidationErrors } from '../middleware/security.js';
+import { validateExternalApiKeys } from '../utils/api-keys.js';
 
 const router = Router();
 
@@ -19,6 +20,7 @@ router.post('/generate-caption',
   rateLimiters.aiGeneration,
   requireAuth, 
   checkUsageLimit,
+  validateExternalApiKeys(['google']),
   validationSchemas.contentGeneration,
   handleValidationErrors,
   async (req: Request, res: Response): Promise<void> => {
@@ -153,6 +155,7 @@ router.post('/generate-image',
   rateLimiters.aiGeneration,
   requireAuth, 
   checkUsageLimit,
+  validateExternalApiKeys(['google']),
   validationSchemas.contentGeneration,
   handleValidationErrors,
   async (req: Request, res: Response): Promise<void> => {
@@ -275,6 +278,7 @@ router.post('/generate-video',
   rateLimiters.aiGeneration,
   requireAuth, 
   checkUsageLimit,
+  validateExternalApiKeys(['google']),
   validationSchemas.contentGeneration,
   handleValidationErrors,
   async (req: Request, res: Response): Promise<void> => {

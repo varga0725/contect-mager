@@ -8,6 +8,8 @@ import dotenv from 'dotenv';
 import { testConnection } from './config/database.js';
 import { checkDatabaseHealth, formatHealthStatus } from './utils/health-check.js';
 import { logger, morganStream } from './utils/logger.js';
+import { initializeSecurityEnvironment, getSecureSessionConfig, getCSPConfig } from './config/security.js';
+import { initializeApiKeyManagement } from './utils/api-keys.js';
 import { requestIdMiddleware, errorHandler, notFoundHandler } from './middleware/error.js';
 import { 
   sanitizeInput, 
@@ -26,6 +28,12 @@ import analyticsRoutes from './routes/analytics.js';
 // Load environment variables
 dotenv.config();
 
+// Initialize security environment
+initializeSecurityEnvironment();
+
+// Initialize API key management
+initializeApiKeyManagement();
+
 const app = express();
 const PORT = process.env['PORT'] || 3001;
 
@@ -34,7 +42,22 @@ const PgSession = connectPgSimple(session);
 
 // Middleware
 app.use(requestIdMiddleware);
-app.use(helmet());
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", "'unsafe-inline'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      imgSrc: ["'self'", "data:", "https:"],
+      connectSrc: ["'self'", "https:"],
+      fontSrc: ["'self'", "https:"],
+      objectSrc: ["'none'"],
+      mediaSrc: ["'self'", "https:"],
+      frameSrc: ["'none'"],
+    },
+  },
+  crossOriginEmbedderPolicy: false, // Disable for AI service compatibility
+}));
 app.use(securityHeaders);
 app.use(cors({
   origin: process.env['FRONTEND_URL'] || 'http://localhost:5173',
@@ -54,21 +77,14 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(sanitizeInput);
 
 // Session configuration
+const sessionConfig = getSecureSessionConfig();
 app.use(session({
   store: new PgSession({
     conString: process.env['DATABASE_URL'],
     tableName: 'session',
     createTableIfMissing: true,
   }),
-  secret: process.env['SESSION_SECRET'] || 'your-secret-key-change-in-production',
-  resave: false,
-  saveUninitialized: false,
-  cookie: {
-    secure: process.env['NODE_ENV'] === 'production',
-    httpOnly: true,
-    maxAge: 24 * 60 * 60 * 1000, // 24 hours
-    sameSite: process.env['NODE_ENV'] === 'production' ? 'none' : 'lax',
-  },
+  ...sessionConfig,
 }));
 
 // Initialize Passport

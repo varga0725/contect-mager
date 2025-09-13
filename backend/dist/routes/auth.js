@@ -2,6 +2,10 @@ import { Router } from 'express';
 import passport from '../config/passport.js';
 import { AuthService } from '../services/auth.js';
 import { requireAuth, requireGuest } from '../middleware/auth.js';
+import { asyncHandler, createValidationError } from '../middleware/error.js';
+import { ValidationError, AuthenticationError } from '../types/errors.js';
+import { loggers } from '../utils/logger.js';
+import { rateLimiters, validationSchemas, handleValidationErrors } from '../middleware/security.js';
 const router = Router();
 // Validation helper
 function validateEmail(email) {
@@ -17,50 +21,27 @@ function validatePassword(password) {
  * POST /api/auth/register
  * Register a new user
  */
-router.post('/register', requireGuest, async (req, res) => {
+router.post('/register', rateLimiters.auth, requireGuest, validationSchemas.userRegistration, handleValidationErrors, asyncHandler(async (req, res) => {
+    const { email, password } = req.body;
+    // Validation
+    if (!email || !password) {
+        throw createValidationError('Email and password are required');
+    }
+    if (!validateEmail(email)) {
+        throw createValidationError('Invalid email format', 'email');
+    }
+    if (!validatePassword(password)) {
+        throw createValidationError('Password must be at least 8 characters with uppercase, lowercase, and number', 'password');
+    }
     try {
-        const { email, password } = req.body;
-        // Validation
-        if (!email || !password) {
-            return res.status(400).json({
-                success: false,
-                error: {
-                    code: 'VALIDATION_ERROR',
-                    message: 'Email and password are required'
-                }
-            });
-        }
-        if (!validateEmail(email)) {
-            return res.status(400).json({
-                success: false,
-                error: {
-                    code: 'VALIDATION_ERROR',
-                    message: 'Invalid email format'
-                }
-            });
-        }
-        if (!validatePassword(password)) {
-            return res.status(400).json({
-                success: false,
-                error: {
-                    code: 'VALIDATION_ERROR',
-                    message: 'Password must be at least 8 characters with uppercase, lowercase, and number'
-                }
-            });
-        }
         // Create user
         const user = await AuthService.createUser({ email, password });
+        // Log successful registration
+        loggers.auth.register(user.id, user.email, req.ip || 'unknown');
         // Log in the user automatically after registration
         req.login(user, (err) => {
             if (err) {
-                console.error('Login error after registration:', err);
-                return res.status(500).json({
-                    success: false,
-                    error: {
-                        code: 'LOGIN_ERROR',
-                        message: 'User created but login failed'
-                    }
-                });
+                throw new AuthenticationError('User created but login failed');
             }
             return res.status(201).json({
                 success: true,
@@ -71,77 +52,43 @@ router.post('/register', requireGuest, async (req, res) => {
                         subscriptionTier: user.subscriptionTier,
                         monthlyUsage: user.monthlyUsage
                     }
-                }
+                },
+                timestamp: new Date().toISOString(),
+                requestId: req.requestId,
             });
         });
     }
     catch (error) {
-        console.error('Registration error:', error);
         if (error instanceof Error && error.message === 'User already exists with this email') {
-            return res.status(409).json({
-                success: false,
-                error: {
-                    code: 'USER_EXISTS',
-                    message: 'User already exists with this email'
-                }
-            });
+            throw new ValidationError('User already exists with this email', { field: 'email' });
         }
-        res.status(500).json({
-            success: false,
-            error: {
-                code: 'INTERNAL_ERROR',
-                message: 'Registration failed'
-            }
-        });
+        throw error;
     }
-});
+}));
 /**
  * POST /api/auth/login
  * Login user
  */
-router.post('/login', requireGuest, (req, res, next) => {
+router.post('/login', rateLimiters.auth, requireGuest, validationSchemas.userLogin, handleValidationErrors, (req, res, next) => {
     const { email, password } = req.body;
     // Validation
     if (!email || !password) {
-        return res.status(400).json({
-            success: false,
-            error: {
-                code: 'VALIDATION_ERROR',
-                message: 'Email and password are required'
-            }
-        });
+        return next(createValidationError('Email and password are required'));
     }
     passport.authenticate('local', (err, user, info) => {
         if (err) {
-            console.error('Authentication error:', err);
-            return res.status(500).json({
-                success: false,
-                error: {
-                    code: 'INTERNAL_ERROR',
-                    message: 'Authentication failed'
-                }
-            });
+            return next(err);
         }
         if (!user) {
-            return res.status(401).json({
-                success: false,
-                error: {
-                    code: 'INVALID_CREDENTIALS',
-                    message: info?.message || 'Invalid email or password'
-                }
-            });
+            loggers.auth.loginFailed(email, req.ip || 'unknown', info?.message || 'Invalid credentials');
+            return next(new AuthenticationError(info?.message || 'Invalid email or password'));
         }
         req.login(user, (loginErr) => {
             if (loginErr) {
-                console.error('Login error:', loginErr);
-                return res.status(500).json({
-                    success: false,
-                    error: {
-                        code: 'LOGIN_ERROR',
-                        message: 'Login failed'
-                    }
-                });
+                return next(new AuthenticationError('Login failed'));
             }
+            // Log successful login
+            loggers.auth.login(user.id, user.email, req.ip || 'unknown');
             return res.json({
                 success: true,
                 data: {
@@ -151,7 +98,9 @@ router.post('/login', requireGuest, (req, res, next) => {
                         subscriptionTier: user.subscriptionTier,
                         monthlyUsage: user.monthlyUsage
                     }
-                }
+                },
+                timestamp: new Date().toISOString(),
+                requestId: req.requestId,
             });
         });
     })(req, res, next);
@@ -160,21 +109,21 @@ router.post('/login', requireGuest, (req, res, next) => {
  * POST /api/auth/logout
  * Logout user
  */
-router.post('/logout', requireAuth, (req, res) => {
+router.post('/logout', requireAuth, (req, res, next) => {
+    const user = req.user;
     req.logout((err) => {
         if (err) {
-            console.error('Logout error:', err);
-            return res.status(500).json({
-                success: false,
-                error: {
-                    code: 'LOGOUT_ERROR',
-                    message: 'Logout failed'
-                }
-            });
+            return next(new AuthenticationError('Logout failed'));
+        }
+        // Log successful logout
+        if (user) {
+            loggers.auth.logout(user.id, user.email);
         }
         return res.json({
             success: true,
-            message: 'Logged out successfully'
+            message: 'Logged out successfully',
+            timestamp: new Date().toISOString(),
+            requestId: req.requestId,
         });
     });
 });
@@ -182,16 +131,10 @@ router.post('/logout', requireAuth, (req, res) => {
  * GET /api/auth/me
  * Get current user
  */
-router.get('/me', requireAuth, (req, res) => {
+router.get('/me', requireAuth, (req, res, next) => {
     const user = req.user;
     if (!user) {
-        return res.status(401).json({
-            success: false,
-            error: {
-                code: 'UNAUTHORIZED',
-                message: 'No authenticated user'
-            }
-        });
+        return next(new AuthenticationError('No authenticated user'));
     }
     return res.json({
         success: true,
@@ -202,7 +145,9 @@ router.get('/me', requireAuth, (req, res) => {
                 subscriptionTier: user.subscriptionTier,
                 monthlyUsage: user.monthlyUsage
             }
-        }
+        },
+        timestamp: new Date().toISOString(),
+        requestId: req.requestId,
     });
 });
 export default router;
