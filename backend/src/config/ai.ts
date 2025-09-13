@@ -8,7 +8,7 @@ try {
   const apiKey = getExternalApiKey('google');
   genAI = new GoogleGenerativeAI(apiKey);
 } catch (error) {
-  console.warn('Google AI API key not configured, AI features will be disabled');
+  logger.warn('Google AI API key not configured, AI features will be disabled');
   genAI = new GoogleGenerativeAI(''); // Fallback for development
 }
 
