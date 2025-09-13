@@ -39,9 +39,9 @@ export function verifyApiKey(apiKey: string, hash: string): boolean {
 /**
  * Validate API key format
  */
-export function validateApiKeyFormat(apiKey: string): boolean {
+export function validateApiKeyFormat(apiKey: string, length: number = 32): boolean {
   // API keys should be hex strings of specific length
-  const hexRegex = /^[a-f0-9]{64}$/i; // 32 bytes = 64 hex chars
+  const hexRegex = new RegExp(`^[a-f0-9]{${length * 2}}$`, 'i'); // length bytes = length*2 hex chars
   return hexRegex.test(apiKey);
 }
 
